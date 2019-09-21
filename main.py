@@ -119,9 +119,9 @@ def download_imgs(source, imgs):
 
 def auto(src_path, img_paths):
     n_paths = len(img_paths)
-    with Image.open(src_path, 'r') as img:
-        src_w, src_h = img.size
+    src_w, src_h = Image.open(src_path, 'r').size
     tile_ratio = src_h/src_w
+    10 * (src_w / n_paths)
     enlargement = 1920/src_w
     tile_width, reuse = None, None
     return tile_ratio, tile_width, enlargement, reuse
@@ -131,6 +131,7 @@ def main():
     reddit_bot = init_bot()
     input_sub = input("SUBREDDIT? ")
     settings = input("Settings? ")
+    custom = None
     if settings == "custom":
         itm_type = input("Type (all, top, hot, new, controversial)? ")
         itm_limit = input("Time (hour, day, week, month, year, all)? ")
@@ -140,7 +141,7 @@ def main():
             'limit': itm_limit,
             'score': itm_score
         }
-    src, imgs = get_images(reddit_bot, input_sub, settings)
+    src, imgs = get_images(reddit_bot, input_sub, custom)
     src_path, paths = download_imgs(src, imgs)
 
     create_mosaic(

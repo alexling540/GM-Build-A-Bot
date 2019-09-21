@@ -1,4 +1,4 @@
-## Make-A-Bot
+## Build-A-Bot
 **Dependencies**
 - PRAW
 - ConfigParser
