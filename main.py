@@ -1,6 +1,7 @@
 import praw
 import configparser
 import requests
+import os
 from PIL import Image
 from mosaic import create_mosaic
 
@@ -141,6 +142,12 @@ def main():
             'limit': itm_limit,
             'score': itm_score
         }
+    if not os.path.exists('img_src'):
+        os.mkdir('img_src')
+    if not os.path.exists('img_in'):
+        os.mkdir('img_in')
+    if not os.path.exists('img_out'):
+        os.mkdir('img_out')
     src, imgs = get_images(reddit_bot, input_sub, custom)
     src_path, paths = download_imgs(src, imgs)
 
