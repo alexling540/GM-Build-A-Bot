@@ -1,10 +1,13 @@
 import praw
 import configparser
 import requests
+import requests.exceptions as requests_e
+import os
+import shutil
 from PIL import Image
 from mosaic import create_mosaic
 
-SETTINGS = {
+POST_SETTINGS = {
     'day': {
         'time': 'day',
         'limit': 100,
@@ -44,115 +47,137 @@ def init_bot():
     CLIENT_SECRET = cfg['PRAW']['ClientSecret']
     USER_AGENT = cfg['PRAW']['UserAgent']
 
-    #if 'Reddit' in cfg:
-    #    redditBot = praw.Reddit(client_id=cfg['PRAW']['ClientID'],
-    #                            client_secret=cfg['PRAW']['ClientSecret'],
-    #                            user_agent=cfg['PRAW']['UserAgent'],
-    #                            username=cfg['Reddit']['Username'],
-    #                            password=cfg['Reddit']['Password'])
-    #else:
-    #    redditBot = praw.Reddit(client_id=cfg['PRAW']['ClientID'],
-    #                            client_secret=cfg['PRAW']['ClientSecret'],
-    #                            user_agent=cfg['PRAW']['UserAgent'])
-    reddit_bot = praw.Reddit(client_id=CLIENT_ID,
-                             client_secret=CLIENT_SECRET,
-                             user_agent=USER_AGENT)
-
-    return reddit_bot
+    return praw.Reddit(client_id=CLIENT_ID, client_secret=CLIENT_SECRET, user_agent=USER_AGENT)
 
 
-def get_images(r_bot, subreddit, setting=None):
-    if setting is None:
-        setting = SETTINGS['week']
-    url = "https://www.reddit.com/r/{sub}/about/.json".format(sub=subreddit)
-    r_get = requests.get(url, headers={'User-agent': USER_AGENT})
-    r_data = r_get.json()['data']
-    source = None
-    if r_data['header_img'] != "":
-        source = r_data['header_img']
-    elif r_data['banner_background_image'] != "":
-        source = r_data['banner_background_image']
-    elif r_data['icon_img'] != "":
-        source = r_data['icon_img']
-
-    print(source)
-
-    img_ext = ('.jpg', '.png', '.jpeg')
-    imgs = []
-    sr = r_bot.subreddit(subreddit)
-    for submission in sr.top(setting['type'], limit=setting['limit']):
-        if not submission.selftext and submission.url.endswith(img_ext):
-            if submission.score >= setting['score']:
-                if not submission.over_18:
-                    print(submission.score, end=' ')
-                    print(submission.url)
-                    imgs.append(submission.url)
-    return source, imgs
-
-
-def download_imgs(source, imgs):
-    def dl(img, fn):
-        r = requests.get(img)
-        with open(fn, 'wb') as f:
-            f.write(r.content)
-
-    if source is None:
-        src_path = 'img_def.png'
-    else:
-        src_fn = 'img_src/img_src.{e}'.format(e=source.split('.')[-1])
-        r = requests.get(source)
-        with open(src_fn, 'wb') as f:
-            f.write(r.content)
-        src_path = src_fn
-
-    paths = []
-    idx = 0
-    for img in imgs:
-        img_fn = 'img_in/{n}.{e}'.format(n=idx, e=img.split('.')[-1])
-        r = requests.get(img)
-        with open(img_fn, 'wb') as f:
-            f.write(r.content)
-        paths.append(img_fn)
-        idx += 1
-    return src_path, paths
-
-
-def auto(src_path, img_paths):
+def auto_tune(src_path, img_paths):
     n_paths = len(img_paths)
-    with Image.open(src_path, 'r') as img:
-        src_w, src_h = img.size
+    src_w, src_h = Image.open(src_path, 'r').size
     tile_ratio = src_h/src_w
+    10 * (src_w / n_paths)
     enlargement = 1920/src_w
     tile_width, reuse = None, None
     return tile_ratio, tile_width, enlargement, reuse
+
+
+def mosaic(bot, subreddit, settings):
+    def get_src_img(sub):
+        url = f'https://www.reddit.com/r/{sub}/about/.json'
+        source = ('local', 'img_def.png')
+        try:
+            r_get = requests.get(url, headers={'User-agent': USER_AGENT})
+            r_data = r_get.json()['data']
+            if r_data['header_img'] != "":
+                source = ('remote', r_data['header_img'])
+            elif r_data['banner_background_image'] != "":
+                source = ('remote', r_data['banner_background_image'])
+            elif r_data['icon_img'] != "":
+                source = ('remote', r_data['icon_img'])
+        except requests_e.ConnectionError as connect_err:
+            print(f'{connect_err}')
+        except requests_e.HTTPError as http_err:
+            print(f'{http_err}')
+        except requests_e.Timeout as timeout_err:
+            print(f'{timeout_err}')
+        except requests_e.TooManyRedirects as redirect_err:
+            print(f'{redirect_err}')
+        return source
+
+    def get_tile_imgs(sub):
+        img_ext = ('.jpg', '.png', '.jpeg')
+        tiles = []
+        sr = bot.subreddit(subreddit)
+        idx = 0
+        for submission in sr.top(settings['time'], limit=settings['limit']):
+            if not submission.selftext and submission.url.endswith(img_ext):
+                if submission.score >= settings['score']:
+                    if not submission.over_18:
+                        print(submission.score, end=' ')
+                        print(submission.url)
+                        tiles.append((idx, submission.url))
+                        idx += 1
+        return tiles
+
+    def download_imgs(src, tiles):
+        def download(img_path, img_fn):
+            try:
+                r = requests.get(img_path, timeout=30)
+                r.raise_for_status()
+                if r.status_code == 200:
+                    open(img_fn, 'wb').write(r.content)
+            except requests_e.ConnectionError as connect_err:
+                print(f'{connect_err}')
+            except requests_e.HTTPError as http_err:
+                print(f'{http_err}')
+            except requests_e.Timeout as timeout_err:
+                print(f'{timeout_err}')
+            except requests_e.TooManyRedirects as redirect_err:
+                print(f'{redirect_err}')
+
+        if os.path.exists('img_src'):
+            shutil.rmtree('img_src')
+        if os.path.exists('img_in'):
+            shutil.rmtree('img_in')
+        if os.path.exists('img_out'):
+            shutil.rmtree('img_out')
+        os.mkdir('img_src')
+        os.mkdir('img_in')
+        os.mkdir('img_out')
+
+        tile_paths = []
+
+        if src[0] == 'remote':
+            src_path = 'img_src/img_src.{e}'.format(e=src[1].split('.')[-1])
+            download(src[1], src_path)
+        else:
+            shutil.copyfile('img_def.png', 'img_src/img_def.png')
+            src_path = 'img_src/img_def.png'
+        for tile in tiles:
+            tile_path = 'img_in/{i}.{e}'.format(i=tile[0], e=tile[1].split('.')[-1])
+            tile_paths.append(tile_path)
+            download(tile[1], tile_path)
+        return src_path, tile_paths
+
+    src = get_src_img(subreddit)
+    tiles = get_tile_imgs(subreddit)
+    src_path, tile_paths = download_imgs(src, tiles)
+    create_mosaic(
+        source_path=src_path,
+        target="img_out/img_out.png",
+        tile_paths=tile_paths,
+        # tile_ratio=1920/400,
+        tile_width=20,
+        enlargement=5,
+        # reuse=True
+        # color_mode='RGB'
+    )
 
 
 def main():
     reddit_bot = init_bot()
     input_sub = input("SUBREDDIT? ")
     settings = input("Settings? ")
-    if settings == "custom":
+    if settings == 'day':
+        setting = POST_SETTINGS['day']
+    elif settings == 'week':
+        setting = POST_SETTINGS['week']
+    elif settings == 'month':
+        setting = POST_SETTINGS['month']
+    elif settings == 'year':
+        setting = POST_SETTINGS['year']
+    elif settings == 'all':
+        setting = POST_SETTINGS['all']
+    else:
         itm_type = input("Type (all, top, hot, new, controversial)? ")
         itm_limit = input("Time (hour, day, week, month, year, all)? ")
         itm_score = input("Minimum karma? ")
-        custom = {
+        setting = {
             'type': itm_type,
             'limit': itm_limit,
             'score': itm_score
         }
-    src, imgs = get_images(reddit_bot, input_sub, settings)
-    src_path, paths = download_imgs(src, imgs)
 
-    create_mosaic(
-        source_path="{src}".format(src=src_path),
-        target="img_out/img_out.png",
-        tile_paths=paths,
-        # tile_ratio=1920/800,
-        # tile_width=300,
-        # enlargement=20,
-        # reuse=True,
-        # color_mode='RGB'
-    )
+    mosaic(reddit_bot, input_sub, setting)
 
 
 if __name__ == "__main__":
