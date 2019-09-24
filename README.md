@@ -2,7 +2,8 @@
 **Dependencies**
 - PRAW
 - ConfigParser
-- PIL
-- [mosaic](https://github.com/dvdtho/python-photo-mosaic)
+- Pillow
+- PySide 2
+- [mosaic](https://github.com/dvdtho/python-photo-mosaic) by dvdtho
   - scikit-image
-  - numpy 
+  - numpy
