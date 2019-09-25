@@ -3,7 +3,7 @@
 - PRAW
 - ConfigParser
 - Pillow
-- PySide 2
+- PySide2
 - [mosaic](https://github.com/dvdtho/python-photo-mosaic) by dvdtho
   - scikit-image
   - numpy
