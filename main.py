@@ -4,8 +4,9 @@ import requests
 import requests.exceptions as requests_e
 import os
 import shutil
+import mosaic
 from PIL import Image
-from mosaic import create_mosaic
+from math import sqrt
 
 POST_SETTINGS = {
     'day': {
@@ -55,16 +56,6 @@ def init_bot():
     return praw.Reddit(client_id=CLIENT_ID, client_secret=CLIENT_SECRET, user_agent=USER_AGENT)
 
 
-def auto_tune(src_path, img_paths):
-    n_paths = len(img_paths)
-    src_w, src_h = Image.open(src_path, 'r').size
-    tile_ratio = src_h/src_w
-    10 * (src_w / n_paths)
-    enlargement = 1920/src_w
-    tile_width, reuse = None, None
-    return tile_ratio, tile_width, enlargement, reuse
-
-
 class RedditMosaicMaker:
 
     def __init__(self, bot=None, subreddit=None, settings=None):
@@ -72,7 +63,8 @@ class RedditMosaicMaker:
         self.subreddit = subreddit
         self.settings = settings
         self.src_link, self.tile_links, self.src_path, self.tile_paths = None, None, None, None
-        self.__status_src__, self.__status_tiles__ = 0, 0
+        self.__status_src__, self.__status_tiles__, self.__status_config__ = 0, 0, 0
+        self.__config__ = [mosaic.Config(tile_ratio=1920//800, tile_width=300, enlargement=20, color_mode='RGB'), True]
 
     def set_bot(self, bot):
         self.bot = bot
@@ -96,17 +88,18 @@ class RedditMosaicMaker:
             elif r_data['icon_img'] != "":
                 source = ('remote', r_data['icon_img'])
         except requests_e.ConnectionError as connect_err:
-            print(f'{connect_err}')
-            print("\tSOURCE: Using default image")
+            print("SOURCE: Using default image... \n└\t",
+                  f'{connect_err}')
+            print("\t")
         except requests_e.HTTPError as http_err:
-            print(f'{http_err}')
-            print("\tSOURCE: Using default image")
+            print("SOURCE: Using default image... \n└\t",
+                  f'{http_err}')
         except requests_e.Timeout as timeout_err:
-            print(f'{timeout_err}')
-            print("\tSOURCE: Using default image")
+            print("SOURCE: Using default image... \n└\t",
+                  f'{timeout_err}')
         except requests_e.TooManyRedirects as redirect_err:
-            print(f'{redirect_err}')
-            print("\tSOURCE: Using default image")
+            print("SOURCE: Using default image... \n└\t",
+                  f'{redirect_err}')
 
         self.src_link = source
         self.__status_src__ = 1
@@ -137,8 +130,8 @@ class RedditMosaicMaker:
                         if not submission.over_18:
                             tiles.append(submission.url)
         except ValueError as value_error:
-            print(f'{value_error}')
-            print("\tTILES: Unable to fetch images")
+            print("TILES: Unable to fetch images \n└\t",
+                  f'{value_error}')
             self.__status_tiles__ = -1
         else:
             self.tile_links = tiles
@@ -152,16 +145,20 @@ class RedditMosaicMaker:
             if r.status_code == 200:
                 open(img_fn, 'wb').write(r.content)
         except requests_e.ConnectionError as connect_err:
-            print(f'{connect_err}')
+            print("DOWNLOAD: Download failed, skipping... \n└\t",
+                  f'{connect_err}')
             return -1
         except requests_e.HTTPError as http_err:
-            print(f'{http_err}')
+            print("DOWNLOAD: Download failed, skipping... \n└\t",
+                  f'{http_err}')
             return -1
         except requests_e.Timeout as timeout_err:
-            print(f'{timeout_err}')
+            print("DOWNLOAD: Download failed, skipping... \n└\t",
+                  f'{timeout_err}')
             return -1
         except requests_e.TooManyRedirects as redirect_err:
-            print(f'{redirect_err}')
+            print("DOWNLOAD: Download failed, skipping... \n└\t",
+                  f'{redirect_err}')
             return -1
         else:
             return 0
@@ -178,12 +175,12 @@ class RedditMosaicMaker:
                 else:
                     shutil.copyfile('img_def.png', 'img_src/img_def.png')
                     src_path = 'img_src/img_def.png'
-                self.src_path = src_path
             except OSError as os_error:
-                print(f'{os_error}')
-                print("\tSOURCE: Unable to delete old directory / new directory")
-                self.__status_src__ = -1
+                print("SOURCE: Unable to delete old directory / new directory \n└\t",
+                      f'{os_error}')
+                self.__status_src__ = -2
             else:
+                self.src_path = src_path
                 self.__status_src__ = 2
         else:
             print("SOURCE: Image link not found")
@@ -200,7 +197,7 @@ class RedditMosaicMaker:
             except OSError as os_error:
                 print(f'{os_error}')
                 print("TILES: Unable to delete old directory / make new directory")
-                self.__status_tiles__ = -1
+                self.__status_tiles__ = -2
             else:
                 tile_paths = []
                 idx = 0
@@ -211,19 +208,49 @@ class RedditMosaicMaker:
                         tile_paths.append(tile_path)
                         idx += 1
                     else:
-                        print(f'TILES: Failed to download {tile_path}')
+                        print(f'TILES: Failed to download {tile}')
                 print("TILES: Downloaded {num} of {den} images".format(num=idx, den=len(self.tile_links)))
                 self.tile_paths = tile_paths
                 self.__status_tiles__ = 2
         else:
             print("TILES: Image links not found")
 
-    def tune(self, tile_ratio, tile_width, enlargement, reuse, color_mode):
-        pass
+    def set_config(self, config, reuse=False):
+        if self.__status_src__ == 2 and self.__status_tiles__ == 2:
+            src = mosaic.SourceImage(self.src_path, config)
+            msc = mosaic.MosaicImage(src.image, "img_out/img_out.png", config)
+            if msc.total_tiles > len(self.tile_paths):
+                reuse = True
 
-    def auto_tune(self):
-        pass
-        # self.tune()
+            nConfig = mosaic.Config(
+                tile_ratio=config.tile_ratio,
+                tile_width=int(round(config.tile_width)),
+                enlargement=int(round(config.enlargement))
+            )
+
+            self.__config__ = (nConfig, reuse)
+            self.__status_config__ = 1
+        else:
+            print("CONFIG: No Source / Tiles found, cannot config")
+
+    def auto_config(self):
+        try:
+            src = Image.open(self.src_path)
+            src_w, src_h = src.size
+            tile_ratio = src_w / src_h
+            enlargement = 1920 // src_w
+            tile_width = sqrt((1920 / tile_ratio) * (1920 / len(self.tile_paths))) / 2
+
+            cfg = mosaic.Config(tile_ratio=tile_ratio, tile_width=tile_width, enlargement=enlargement)
+            self.set_config(cfg, False)
+        except IOError as io_error:
+            print("CONFIG: Source image could not be opened \n└\t",
+                  f'{io_error}')
+        except AttributeError as attr_error:
+            print("CONFIG: Source image does not exist \n└\t",
+                  f'{attr_error}')
+        finally:
+            src.close()
 
     def make(self):
         if self.__status_src__ == 0:
@@ -235,23 +262,35 @@ class RedditMosaicMaker:
         if self.__status_tiles__ == 1:
             self.download_tiles()
         if self.__status_src__ == 2 and self.__status_tiles__ == 2:
-            # pass
-            create_mosaic(
-                source_path=self.src_path,
-                target="img_out/img_out.png",
-                tile_paths=self.tile_paths,
-                # tile_ratio=1920/400,
-                tile_width=20,
-                enlargement=5,
-                # reuse=True
-                # color_mode='RGB'
+            if self.__status_config__ == 0:
+                print("MAKE: No config found, using default config")
+            mosaic.create_mosaic(
+                source_path = self.src_path,
+                target      = "img_out/img_out.png",
+                tile_paths  = self.tile_paths,
+                tile_ratio  = self.__config__[0].tile_ratio,
+                tile_width  = self.__config__[0].tile_width,
+                enlargement = self.__config__[0].enlargement,
+                reuse       = self.__config__[1],
+                color_mode  = self.__config__[0].color_mode
             )
+        else:
+            fail_case = "Unknown"
+            if self.__status_src__ == -1:
+                fail_case = "get_src_img"
+            elif self.__status_src__  == -2:
+                fail_case = "download_src"
+            elif self.__status_tiles__ == -1:
+                fail_case = "get_tile_imgs"
+            elif self.__status_tiles__ == -2:
+                fail_case = "download_tiles"
+            print(f"MAKE: Make failed, try {fail_case} again")
 
 
 def main():
     reddit_bot = init_bot()
     input_sub = input("SUBREDDIT? ")
-    settings = input("Settings? ")
+    settings = input("Settings? (day, week, month, year, all, custom) ")
     if settings == 'day':
         setting = POST_SETTINGS['day']
     elif settings == 'week':
@@ -276,6 +315,11 @@ def main():
 
     # rmm = RedditMosaicMaker()
     rmm = RedditMosaicMaker(reddit_bot, input_sub, setting)
+    rmm.get_src_img()
+    rmm.get_tile_imgs()
+    rmm.download_src()
+    rmm.download_tiles()
+    rmm.auto_config()
     rmm.make()
 
 
