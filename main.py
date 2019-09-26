@@ -313,7 +313,6 @@ def main():
             'score': itm_score
         }
 
-    # rmm = RedditMosaicMaker()
     rmm = RedditMosaicMaker(reddit_bot, input_sub, setting)
     rmm.get_src_img()
     rmm.get_tile_imgs()
